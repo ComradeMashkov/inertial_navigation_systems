@@ -1,0 +1,7 @@
+[submodule "NumCpp"]
+    path = lab2/NumCpp
+    url = https://github.com/dpilger26/NumCpp.git
+
+[submodule "qcustomplot"]
+    path = lab2/QCustomPlot-library
+    url = https://github.com/zohannn/qcustomplot.git
