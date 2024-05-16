@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1200</width>
+    <height>800</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1200</width>
+    <height>800</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QGridLayout" name="gridLayout">
+    <item row="2" column="0">
+     <widget class="QCustomPlot" name="customPlot_2" native="true"/>
+    </item>
+    <item row="1" column="0">
+     <widget class="QCustomPlot" name="customPlot" native="true"/>
+    </item>
+    <item row="3" column="0">
+     <widget class="QCustomPlot" name="customPlot_3" native="true"/>
+    </item>
+    <item row="0" column="0">
+     <widget class="QComboBox" name="comboBox">
+      <property name="currentIndex">
+       <number>-1</number>
+      </property>
+      <item>
+       <property name="text">
+        <string>1. INS errors simulation</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>2. Kalman Filter (default)</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>3. Kalman Filter (P - min/max)</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>4. Kalman Filter (R - min/max)</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>5. Kalman Filter (Q - min/max)</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>6. Kalman Filter (Long estimation)</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>7. Kalman Filter (Short estimation)</string>
+       </property>
+      </item>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1200</width>
+     <height>36</height>
+    </rect>
+   </property>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>QCustomPlot</class>
+   <extends>QWidget</extends>
+   <header>qcustomplot.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>
