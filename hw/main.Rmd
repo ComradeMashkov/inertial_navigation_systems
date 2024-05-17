@@ -1,0 +1,292 @@
+---
+title: "INS Home work"
+author: "Ilya Mashkov, Bauman Moscow State Technical University"
+output:
+  pdf_document: 
+    number_section: true
+date: "2024-05-16"
+---
+
+# Defining initial constants
+
+## External parameters
+
+First of all, we should define external parameters, which should be used in further calculations. All variables below are defined for Earth-fixed frame.
+
+This is the list of all constants defined in this section:
+
+-   Gravity force acceleration absolute value: $g_{ef},\:[m/s^2]$
+-   WGS-84 major axle: $a_{ef},\:[m]$
+-   WGS-84 minor axle: $b_{ef},\:[m]$
+-   WGS-84 eccentricity: $e_{ef}$
+-   Earth's rotation speed: $U_{ef},\:[rad/s]$
+-   Object height: $H_{ef},\:[m]$
+
+```{r}
+g_ef <- 9.815
+a_ef <- 6378137
+b_ef <- 6356752.3
+e_ef <- (a_ef^2 - b_ef^2) / a_ef^2
+U_ef <- 2 * pi / (24 * 60 * 60)
+H_ef <- 0
+```
+
+## Simulation parameters
+
+Then we should define simulation parameters, suitable for 2 hour simulation:
+
+-   Measurement acquisition frequency: $\nu_N,\:[Hz]$
+-   Measurement acquisition time interval: $h_{N1},\:h_{N3},\:[s]$
+-   Overall simulation time: $t_f,\:[s]$
+-   Simulation time interval: $t,\:[s]$
+
+```{r}
+nu_N <- 10
+h_N1 <- 1 / nu_N
+h_N3 <- h_N1
+t_f <- 2 * 60 * 60
+t <- seq(
+    from = 0,
+    to = t_f,
+    by = h_N1
+)
+```
+
+## Initial coordinates
+
+In this short block we should define initial coordinates values. Additional function for converting degrees to rads:
+
+```{r}
+deg2rad <- function(deg) {
+    (deg * pi) / 180
+}
+```
+
+Initial values:
+
+-   Longitude: $\varphi_0,\:[rad]$
+-   Latitude: $\lambda_0,\:[rad]$
+-   Azimuth: $\varepsilon_0,\:[rad]$
+
+```{r}
+phi_0 <- deg2rad(27)
+lambda_0 <- deg2rad(13)
+eps_0 <- deg2rad(0)
+```
+
+## Sensors inaccuracies
+
+We should also take in attention sensors inaccuracies and flag for disabling these inaccuracies:
+
+-   Bias for quartz accelerometer AK-18: $b,\:[m/s^2]$
+-   Drift speed: $\omega^{dr},\:[rad/s]$
+
+```{r}
+inaccuracies_enabled <- 1
+b <- 25 * g_ef * 1e-6
+w_dr <- deg2rad(0.01) / 3600
+```
+
+## Rotation parameters
+
+It is necessary to define rotation parameters of INS and flag to disable its rotation.
+
+INS can be rotated along X, Y and Z axes.
+
+-   1 - $X$ axis
+-   2 - $Y$ axis
+-   3 - $Z$ axis
+
+Rotation angle is defined as 10 degrees.
+
+```{r}
+rotation_enabled <- 0
+axis <- 2
+rotation_angle <- deg2rad(10)
+rotation_start_time <- 60 * 60
+rotation_duration <- 5
+```
+
+## Matrices initialization
+
+Finally, we should initialize all output matrices, which then will be used for calculus and simulation.
+
+```{r}
+sum_Wx <- 0
+sum_Wy <- 0
+sum_Kx <- 0
+sum_Ky <- 0
+
+Q_f <- matrix(
+    data = c(1, 0, 0, 0),
+    nrow = 1,
+    ncol = 4
+)
+
+omega <- matrix(
+    data = c(0, 0, 0),
+    nrow = 3,
+    ncol = 1
+)
+
+psi <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+)
+
+theta <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+)
+
+gamma <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+)
+
+heading <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+)
+
+V <- matrix(
+    data = 0,
+    nrow = 3,
+    ncol = length(time)
+)
+
+U <- matrix(
+    data = 0,
+    nrow = 3,
+    ncol = length(time)
+)
+
+V_N <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+)
+
+V_E <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+)
+
+phi <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+) + phi_0
+
+lambda <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+) + lambda_0
+
+eps <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = length(time)
+) + eps_0
+```
+
+# Main calculus and simulation
+
+## Sensor values
+
+For our algorithm we should calculate sensor values and transition matrices.
+
+```{r}
+gyr_N <- matrix(
+    data = c(0, U_ef * cos(phi_0), U_ef * sin(phi_0)),
+    nrow = 3,
+    ncol = 1
+)
+
+acc_N <- matrix(
+    data = c(0, 0, g_ef),
+    nrow = 3,
+    ncol = 1
+)
+
+C_B2N <- diag(3)
+
+B_E2N <- matrix(
+    data = 0,
+    nrow = 3,
+    ncol = 3
+)
+B_E2N[1, 1] <- -sin(phi_0) * cos(lambda_0) * sin(eps_0) - sin(lambda_0) * cos(eps_0)
+B_E2N[1, 2] <- sin(phi_0) * sin(lambda_0) * sin(eps_0) + cos(lambda_0) * cos(eps_0)
+B_E2N[1, 3] <- cos(phi_0) * sin(eps_0)
+B_E2N[2, 1] <- -sin(phi_0) * cos(lambda_0) * cos(eps_0) + sin(lambda_0) * sin(eps_0)
+B_E2N[2, 2] <- -sin(phi_0) * sin(lambda_0) * cos(eps_0) - cos(lambda_0) * sin(eps_0)
+B_E2N[2, 3] <- cos(phi_0) * cos(eps_0)
+B_E2N[3, 1] <- cos(phi_0) * cos(lambda_0)
+B_E2N[3, 2] <- cos(phi_0) * sin(lambda_0)
+B_E2N[3, 3] <- sin(phi_0)
+
+B_PE2N <- B_E2N
+
+i <- matrix(
+    data = c(1, 2, 3),
+    nrow = 1,
+    ncol = 3
+)
+
+j <- matrix(
+    data = c(4, 5, 6),
+    nrow = 3,
+    ncol = 1
+)
+
+gyr_B <- t(C_B2N) %*% gyr_N + w_dr * inaccuracies_enabled
+acc_B <- t(C_B2N) %*% acc_N + b * inaccuracies_enabled
+```
+
+## Simulation
+
+In this block we will simulate navigation algorithm.
+
+The programming cycle is divided into some sections:
+
+1.  Rotation
+2.  Derivatives calculus
+3.  Coning procedure
+4.  Sculling procedure
+5.  Fast motion quaternion calculus
+6.  Speed derivatives calculus into Navigation Frame
+7.  Linear and angle speed calculus
+8.  Slow motion quaternion calculus
+9.  Quaternion normalizing
+10. Cosine matrix calculus (Body Frame and Navigation Frame)
+11. Orientation angles calculus
+12. Cosine matrix calculus (Navigation Frame and Earth-centered Frame)
+13. Coordinates calculus
+14. True direction calculus
+15. Speed calculus in Earth-fixed Frame
+
+```{r}
+gyr_b_mod <- c()
+acc_b_mod <- c()
+
+for (i in 1 : length(t) - 1) {
+    # 1
+    gyr_b_mod <- cbind(gyr_b_mod, t(C_B2N) %*% gyr_N + w_dr * inaccuracies_enabled)
+    acc_b_mod <- cbind(acc_b_mod, t(C_B2N) %*% acc_N + b * inaccuracies_enabled)
+    
+    if ((i >= nu_N * rotation_start_time) & (i <= nu_N * (rotation_duration + rotation_start_time)) & (rotation_enabled == 1)) {
+        gyr_b_mod[axis, i] <- gyr_b_mod[axis, i] + rotation_angle / rotation_duration
+    }
+    
+    # 2
+    gyr_b_inc <- gyr_b_mod[, i] * h_N1
+    acc_b_inc <- acc_b_mod[, i] * h_N1
+}
+```
