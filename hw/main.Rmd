@@ -1,11 +1,36 @@
 ---
-title: "INS Home work"
+title: "Inertial Navigation Systems, Homework"
 author: "Ilya Mashkov, Bauman Moscow State Technical University"
+header-includes:
+    - \usepackage{subfig}
+    - \usepackage{placeins}
+    - \usepackage{titling}
+    - \pretitle{\begin{center}
+      \includegraphics[width=2in, height=2in]{bmstu.png}\LARGE\\}
+    - \posttitle{\end{center}}
 output:
   pdf_document: 
+    latex_engine: pdflatex
     number_section: true
+    fig_caption: yes
 date: "2024-05-16"
 ---
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+library('latex2exp')
+library('tidyverse')
+library('lme4')
+library('shiny')
+
+knitr::opts_chunk$set(cache = FALSE, echo=TRUE)
+knitr::knit_hooks$set(plot = function(x, options) {
+    paste0(knitr::hook_plot_tex(x, options), "\n\\FloatBarrier\n")
+})
+```
+
+```{r, include=FALSE}
+rm(list=ls())
+```
 
 # Defining initial constants
 
@@ -19,7 +44,7 @@ This is the list of all constants defined in this section:
 -   WGS-84 major axle: $a_{ef},\:[m]$
 -   WGS-84 minor axle: $b_{ef},\:[m]$
 -   WGS-84 eccentricity: $e_{ef}$
--   Earth's rotation speed: $U_{ef},\:[rad/s]$
+-   Earth's angular rate: $U_{ef},\:[rad/s]$
 -   Object height: $H_{ef},\:[m]$
 
 ```{r}
@@ -58,7 +83,13 @@ In this short block we should define initial coordinates values. Additional func
 
 ```{r}
 deg2rad <- function(deg) {
-    (deg * pi) / 180
+    rads <- (pi / 180) * deg
+    return(rads)
+}
+
+rad2deg <- function(rad) {
+    degs <- (180 / pi) * rad
+    return(degs)
 }
 ```
 
@@ -82,7 +113,7 @@ We should also take in attention sensors inaccuracies and flag for disabling the
 -   Drift speed: $\omega^{dr},\:[rad/s]$
 
 ```{r}
-inaccuracies_enabled <- 1
+inaccuracies_enabled <- 0
 b <- 25 * g_ef * 1e-6
 w_dr <- deg2rad(0.01) / 3600
 ```
@@ -100,7 +131,7 @@ INS can be rotated along X, Y and Z axes.
 Rotation angle is defined as 10 degrees.
 
 ```{r}
-rotation_enabled <- 0
+rotation_enabled <- 1
 axis <- 2
 rotation_angle <- deg2rad(10)
 rotation_start_time <- 60 * 60
@@ -124,7 +155,7 @@ Q_f <- matrix(
 )
 
 omega <- matrix(
-    data = c(0, 0, 0),
+    data = 0,
     nrow = 3,
     ncol = 1
 )
@@ -132,67 +163,67 @@ omega <- matrix(
 psi <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 theta <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 gamma <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 heading <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 V <- matrix(
     data = 0,
     nrow = 3,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 U <- matrix(
     data = 0,
     nrow = 3,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 V_N <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 V_E <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 )
 
 phi <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 ) + phi_0
 
 lambda <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 ) + lambda_0
 
 eps <- matrix(
     data = 0,
     nrow = 1,
-    ncol = length(time)
+    ncol = length(t)
 ) + eps_0
 ```
 
@@ -231,62 +262,520 @@ B_E2N[2, 3] <- cos(phi_0) * cos(eps_0)
 B_E2N[3, 1] <- cos(phi_0) * cos(lambda_0)
 B_E2N[3, 2] <- cos(phi_0) * sin(lambda_0)
 B_E2N[3, 3] <- sin(phi_0)
-
-B_PE2N <- B_E2N
-
-i <- matrix(
-    data = c(1, 2, 3),
-    nrow = 1,
-    ncol = 3
-)
-
-j <- matrix(
-    data = c(4, 5, 6),
-    nrow = 3,
-    ncol = 1
-)
-
-gyr_B <- t(C_B2N) %*% gyr_N + w_dr * inaccuracies_enabled
-acc_B <- t(C_B2N) %*% acc_N + b * inaccuracies_enabled
 ```
 
 ## Simulation
 
-In this block we will simulate navigation algorithm.
+-   In this block we will simulate navigation algorithm.
 
-The programming cycle is divided into some sections:
+-   The programming cycle is divided into some sections:
 
-1.  Rotation
-2.  Derivatives calculus
-3.  Coning procedure
-4.  Sculling procedure
-5.  Fast motion quaternion calculus
-6.  Speed derivatives calculus into Navigation Frame
-7.  Linear and angle speed calculus
-8.  Slow motion quaternion calculus
-9.  Quaternion normalizing
-10. Cosine matrix calculus (Body Frame and Navigation Frame)
-11. Orientation angles calculus
-12. Cosine matrix calculus (Navigation Frame and Earth-centered Frame)
-13. Coordinates calculus
-14. True direction calculus
-15. Speed calculus in Earth-fixed Frame
+### Rotation
+
+Acceleration and angular rate for each period and axis are as follows:
+
+$$ \omega_{x,\:y,\:z} = C_b^N 
+\begin{bmatrix}
+0
+\\U_{ef}\cos(\varphi_0)
+\\U_{ef}\sin(\varphi_0)
+\end{bmatrix} + \omega^{dr}
+$$ $$ a_{x,\:y,\:z} = C_b^N 
+\begin{bmatrix}
+0
+\\0
+\\g_{ef}
+\end{bmatrix} + b
+$$
+
+### Increment calculus
+
+-   Increments of acceleration and angular rate can be computed for each clock cycle interval:
+
+$$ \omega_{xb,\:yb,\:zb}=\omega_{x,\:y,\:z} h_{N1}$$ $$ a_{xb,\:yb,\:zb}=a_{x,\:y,\:z} h_{N1}$$
+
+### Coning procedure
+
+-   At this stage, the effect of error accumulation during fast conical motion is taken into account.
+
+-   According to the homework assignment conditions, within the framework of the problem to be solved, we limit ourselves to the increment of angles according to the current readings of angular rate sensor (ARS), the effect of conical motion is not taken into account.
+
+### Sculling procedure
+
+-   At this stage the Coriolis acceleration is take into account when converting from Inertial Frame to Body Frame.
+
+-   According to the homework assignment conditions, we limit ourselves to the accumulation of velocity increments within the framework of the problem to be solved. Coriolis acceleration is not taken into account.
+
+$$ \Delta W_{xb,\:yb,\:z_b}=\int_{t_k}^{t_k+h_{N1}}a_{xb,\:yb,\:zb}\,dt $$
+
+### Fast motion quaternion calculus
+
+-   At this stage, the quaternion of the fast algorithm update is computed (Body Frame $\rightarrow$ Inertial Frame):
+
+$$r = \frac{1}{2}-\frac{\Delta \Phi^2}{48}-\frac{\Delta \Phi^4}{3840} $$
+
+-   Where:
+
+$$ \Delta \Phi = \sqrt{\Delta\Phi_{xb}^2+\Delta\Phi_{yb}^2+\Delta\Phi_{zb}^2}$$
+
+-   Fast motion quaternion: $$ \Delta \lambda_1 = 1 - \frac{\Delta \Phi^2}{8} + \frac{\Delta \Phi^4}{384}$$ $$ \Delta \lambda_{2}=r\Delta\Phi_{xb} $$ $$ \Delta \lambda_{3}=r\Delta\Phi_{yb} $$ $$ \Delta \lambda_{4}=r\Delta\Phi_{zb} $$
+
+-   General orientation quaternion:
+
+$$ Q_{n+1}^p=Q_n^f \circ \Delta \lambda $$
+
+-   Quaternion multiplication function.
+-   Let $q = q_0+iq_1 + jq_2 + kq_3$ and $r = r_0 + ir_1 + jr_2 + kr_3$. Then output quaternion product has the form of $n = q \times r = n_0 + in_1 + jn_2 + kn_3$. Where:
+
+$$
+\begin{cases}
+n_0=(r_0q_0-r_1q_1-r_2q_2-r_3q_3)
+\\ n_1=(r_0q_1+r_1q_0-r_2q_3+r_3q_2)
+\\ n_2=(r_0q_2+r_1q_3+r_2q_0-r_3q_1)
+\\ n_3=(r_0q_3-r_1q_2+r_2q_1+r_3q_0)
+\end{cases}
+$$
 
 ```{r}
-gyr_b_mod <- c()
-acc_b_mod <- c()
+quatmultiply <- function(q, r) {
+    if ((length(q) != 4) | (length(r) != 4)) {
+        stop("Expecting quaternions as rows.")
+    }
+    
+    p <- matrix(
+        data = c(
+        q[, 1] * r[, 1] - q[, 2] * r[, 2] - q[, 3] * r[, 3] - q[, 4] * r[, 4],
+        q[, 1] * r[, 2] + r[, 1] * q[, 2] + q[, 3] * r[, 4] - q[, 4] * r[, 3],
+        q[, 1] * r[, 3] + r[, 1] * q[, 3] + q[, 4] * r[, 2] - q[, 2] * r[, 4],
+        q[, 1] * r[, 4] + r[, 1] * q[, 4] + q[, 2] * r[, 3] - q[, 3] * r[, 2]),
+        nrow = 1,
+        ncol = 4)
+    
+    return(p)
+}
+```
 
-for (i in 1 : length(t) - 1) {
+### Speed increment calculus into Navigation Frame
+
+-   At the output we obtain the velocity increment in the Body Frame for 1 clock cycle of the navigation algorithm calculation, corresponding to $h_{N3}$:
+
+$$
+\begin{bmatrix}
+\Delta W_x
+\\ \Delta W_y
+\\ \Delta W_z
+\end{bmatrix}_N
+=
+C_b^N
+\begin{bmatrix}
+\Delta W_{xb}
+\\ \Delta W_{yb}
+\\ \Delta W_{zb}
+\end{bmatrix}
+$$
+
+### Linear and angular rate calculus
+
+-   At this moment we should compute these components:
+
+<!-- -->
+
+-   Sum of projections of velocity increment on X and Y axis of the Navigation Frame for the whole navigation mode:
+
+$$W_{x,\:y} = \sum_{i=1}^{t} \Delta W_{x,\:y}$$
+
+-   Coriolis acceleration effect due to the Navigation Frame rotation for both axis:
+
+$$ K_x = \int_{t_0}^{t} (2V_yU_z-V_z(\Omega_y+2U_y))\,dt $$ $$ K_y = \int_{t_0}^{t} (2V_xU_z-V_z(\Omega_x+2U_x))\,dt $$
+
+-   Projections of object linear speed:
+
+$$ V_{x,\:y} = W_{x,\:y} + K_{x,\:y} $$
+
+-   Earth radius for both axes (realized as ellipse WGS-84):
+
+$$ \frac{1}{R_x}=\frac{1}{a}(1-e^2\frac{\sin^2\varphi}{2}+e^2\cos^2\varphi\sin^2\varepsilon-\frac{h}{a}) $$ $$ \frac{1}{R_y}=\frac{1}{a}(1-e^2\frac{\sin^2\varphi}{2}+e^2\cos^2\varphi\cos^2\varepsilon-\frac{h}{a}) $$
+
+-   Thus, angular rate for the Wander Frame relative to the Earth (also for ellipse WGS-84):
+
+$$ \Omega_{x}=-\frac{V_{y}}{R_y}+\frac{V_{x}}{a}e^2\cos^2\varphi\sin\varepsilon\cos\varepsilon$$ $$ \Omega_{y}=\frac{V_{x}}{R_x}+\frac{V_{y}}{a}e^2\cos^2\varphi\sin\varepsilon\cos\varepsilon$$
+
+-   Finally, angular rate is:
+
+$$ \omega_{x,\:y}=\Omega_{x,\:y}+U_{x,\:y}$$
+
+### Slow motion quaternion calculus
+
+-   At this stage the update quaternion of the slow algorithm (Inertial Frame $\rightarrow$ Navigation Frame) is calculated.
+
+$$ \Delta m_1=\cos\frac{\omega h_{N3}}{2}$$ $$ \Delta m_2=-\omega_x\sin\frac{\omega h_{N3}}{2}$$ $$ \Delta m_3=-\omega_y\sin\frac{\omega h_{N3}}{2}$$ - Thus, we can recalculate general rotation quaternion:
+
+$$ Q_n^f=\Delta m \circ Q_{n-1}^p $$
+
+### Quaternion normalizing
+
+### Cosine matrix calculus (Body Frame and Navigation Frame)
+
+### Orientation angles calculus
+
+### Cosine matrix calculus (Navigation Frame and Earth-centered Frame)
+
+### Coordinates calculus
+
+### True direction calculus
+
+### Speed calculus in Earth-fixed Frame
+
+```{r}
+gyr_b_mod <- matrix(
+    data = 0,
+    nrow = 3,
+    ncol = length(t) - 1
+)
+
+acc_b_mod <- matrix(
+    data = 0,
+    nrow = 3,
+    ncol = length(t) - 1
+)
+
+Delta_lambda <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = 4
+)
+
+Delta_m <- matrix(
+    data = 0,
+    nrow = 1,
+    ncol = 4
+)
+```
+
+```{r}
+new_B <- function(B_N_1, omega, h_N) {
+    B_N <- matrix(
+        data = 0,
+        nrow = 3,
+        ncol = 3
+    )
+    
+    B_N[1, 2] = B_N_1[1, 2] - omega[2] * B_N_1[3, 2] * h_N;
+    B_N[2, 2] = B_N_1[2, 2] + omega[1] * B_N_1[3, 2] * h_N;
+    B_N[3, 2] = B_N_1[3, 2] + (omega[2] * B_N_1[1, 2] - omega[1] * B_N_1[2, 2]) * h_N;
+    B_N[1, 3] = B_N_1[1, 3] - omega[2] * B_N_1[3, 3] * h_N;
+    B_N[2, 3] = B_N_1[2, 3] + omega[1] * B_N_1[3, 3] * h_N;
+    B_N[3, 3] = B_N_1[3, 3] + (omega[2] * B_N_1[1, 3] - omega[1] * B_N_1[2, 3]) * h_N;
+    B_N[3, 1] = B_N[1, 2] * B_N[2, 3] - B_N[2, 2] * B_N[1, 3];
+    
+    return(B_N)
+}
+
+new_C <- function(Q) {
+    C_N <- matrix(
+        data = 0,
+        nrow = 3,
+        ncol = 3
+    )
+    
+    C_N[1, 1] = Q[1]^2 + Q[2]^2 - Q[3]^2 - Q[4]^2;
+    C_N[1, 2] = 2 * (Q[2] * Q[3] - Q[1] * Q[4]);
+    C_N[1, 3] = 2 * (Q[2] * Q[4] + Q[1] * Q[3]);
+    C_N[2, 1] = 2 * (Q[2] * Q[3] + Q[1] * Q[4]);
+    C_N[2, 2] = Q[1]^2 + Q[3]^2 - Q[2]^2 - Q[4]^2;
+    C_N[2, 3] = 2 * (Q[3] * Q[4] - Q[1] * Q[2]);
+    C_N[3, 1] = 2 * (Q[2] * Q[4] - Q[1] * Q[3]);
+    C_N[3, 2] = 2 * (Q[3] * Q[4] + Q[1] * Q[2]);
+    C_N[3, 3] = Q[1]^2 + Q[4]^2 - Q[2]^2 - Q[3]^2;
+    
+    return(C_N)
+}
+```
+
+```{r}
+for (i in 1 : (length(t) - 1)) {
     # 1
-    gyr_b_mod <- cbind(gyr_b_mod, t(C_B2N) %*% gyr_N + w_dr * inaccuracies_enabled)
-    acc_b_mod <- cbind(acc_b_mod, t(C_B2N) %*% acc_N + b * inaccuracies_enabled)
+    gyr_b_mod[, i] <- t(C_B2N) %*% gyr_N + w_dr * inaccuracies_enabled
+    acc_b_mod[, i] <- t(C_B2N) %*% acc_N + b * inaccuracies_enabled
     
     if ((i >= nu_N * rotation_start_time) & (i <= nu_N * (rotation_duration + rotation_start_time)) & (rotation_enabled == 1)) {
         gyr_b_mod[axis, i] <- gyr_b_mod[axis, i] + rotation_angle / rotation_duration
     }
     
     # 2
-    gyr_b_inc <- gyr_b_mod[, i] * h_N1
-    acc_b_inc <- acc_b_mod[, i] * h_N1
+    gyr_b_inc <- matrix(
+        data = c(gyr_b_mod[, i] * h_N1),
+        nrow = 3,
+        ncol = 1)
+    acc_b_inc <- matrix(
+        data = c(acc_b_mod[, i] * h_N1),
+        nrow = 3,
+        ncol = 1)
+    
+    # 3
+    Delta_F_b <- gyr_b_inc
+    norm_Delta_F_b <- norm(Delta_F_b, type = "2")
+    
+    # 4
+    W_b <- acc_b_inc
+    
+    # 5
+    r <- 0.5 - norm_Delta_F_b^2 / 48 - norm_Delta_F_b^4 / 3840
+    
+    Delta_lambda[1] <- 1 - norm_Delta_F_b^2 / 8 + norm_Delta_F_b^4 / 384
+    Delta_lambda[2:4] <- r * Delta_F_b[1:3]
+
+    Q_p <- quatmultiply(Q_f, Delta_lambda)
+    
+    # 6
+    W <- C_B2N %*% W_b
+    
+    # 7
+    U[, i] <- U_ef * B_E2N[, 3]
+    sum_Wx <- sum_Wx + W[1]
+    sum_Wy <- sum_Wy + W[2]
+    
+    sum_Kx <- sum_Kx + 2 * V[2, i] * U[3, i] - V[3, i] * (omega[2] + 2 * U[2, i])
+    sum_Ky <- sum_Ky + 2 * V[1, i] * U[3, i] - V[3, i] * (omega[1] + 2 * U[1, i]);
+    
+    V[1, i + 1] <- sum_Wx + sum_Kx
+    V[2, i + 1] <- sum_Wy + sum_Ky
+    
+    R_x <- a_ef / (1 - (e_ef^2 * B_E2N[3, 3]^2) / 2 + e_ef^2 * B_E2N[1, 3]^2 - H_ef / a_ef)
+    R_y = a_ef / (1 - (e_ef^2 * B_E2N[3, 3]^2) / 2 + e_ef^2 * B_E2N[2, 3]^2 - H_ef / a_ef);
+    omega[1] = -V[2, i + 1] / R_y - (V[1, i + 1] / a_ef) * e_ef^2 * B_E2N[1, 3] * B_E2N[2, 3];
+    omega[2] = V[1, i + 1] / R_x + (V[2, i + 1] / a_ef) * e_ef^2 * B_E2N[1, 3] * B_E2N[2, 3];
+    
+    omega_dummy <- omega + U[, i]
+    
+    # 8
+    norm_omega <- norm(omega_dummy, type = "2")
+    
+    Delta_m[1] <- cos(norm_omega * h_N3 / 2)
+    Delta_m[2:4] <- -omega_dummy[1:3] / norm_omega * sin(norm_omega * h_N3 / 2)
+    
+    Q_f <- quatmultiply(Delta_m, Q_p)
+    
+    # 9
+    if (1 - norm(Q_f, type = "2") > 1e-15) {
+        Q_f <- Q_f * (1 + (1 - norm(Q_f, type = "2")) / 2)
+    }
+    
+    # 10
+    C_B2N <- new_C(Q_f)
+    
+    # 11
+    C_0 <- sqrt(C_B2N[3, 1]^2 + C_B2N[3, 3]^2)
+    theta[i + 1] <- atan2(C_B2N[3, 2], C_0)
+    gamma[i + 1] <- -atan2(C_B2N[3, 1], C_B2N[3, 3])
+    psi[i + 1] <- -atan2(C_B2N[1, 2], C_B2N[2, 2])
+    
+    # 12
+    B_E2N <- new_B(B_E2N, omega, h_N1)
+    
+    # 13
+    b_0 <- sqrt(B_E2N[3, 1]^2 + B_E2N[2, 3]^2)
+    
+    phi[i + 1] <- atan2(B_E2N[3, 3], b_0)
+    lambda[i + 1] <- atan2(B_E2N[3, 2], B_E2N[3, 1])
+    eps[i + 1] <- atan2(B_E2N[1, 3], B_E2N[2, 3])
+    
+    # 14
+    heading[i + 1] <- -(psi[i + 1] - eps[i + 1])
+    
+    # 15
+    V_N[i + 1] <- V[2, i + 1] * cos(eps[i + 1]) + V[1, i + 1] * sin(eps[i + 1])
+    V_E[i + 1] <- -V[2, i + 1] * sin(eps[i + 1]) + V[1, i + 1] * cos(eps[i + 1])
 }
+```
+
+## Plotting results
+
+Let's plot some results.
+
+### Pitch, roll, yaw and heading plots
+
+```{r, out.width="70%", fig.cap="Pitch angle plot", fig.align='center'}
+
+plot(x = t / 3600, 
+     y = round(rad2deg(theta)),
+     type = "l", # Plot type (l - lines)
+     lty = 1, # Line type (1 - solid)
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(\theta, \degree)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+```{r, out.width="70%", fig.cap="Roll angle plot", fig.align='center'}
+plot(x = t / 3600, 
+     y = round(rad2deg(gamma)),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(\gamma, \degree)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+```{r, out.width="70%", fig.cap="Yaw angle plot", fig.align='center'}
+plot(x = t / 3600, 
+     y = round(rad2deg(psi)), 
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(\psi, \degree)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+```{r, out.width="70%", fig.cap="Heading angle plot", fig.align='center'}
+plot(x = t / 3600, 
+     y = round(rad2deg(heading)),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(H, \degree)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+### Speed to the north/east plot
+
+```{r, out.width="70%", fig.cap="Speed to the north plot", fig.align='center'}
+plot(x = t / 3600, 
+     y = V_N * 3.6,
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"($V_N$, km/h)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+```{r, out.width="70%", fig.cap="Speed to the east plot", fig.align='center'}
+plot(x = t / 3600,
+     y = V_E * 3.6,
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"($V_E$, km/h)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+### Longitude, latitude and azimuth plots
+
+```{r, out.width="70%", fig.cap="Longitude angle plot", fig.align='center'}
+plot(x = t / 3600, 
+     y = rad2deg(phi),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(\varphi, \degree)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+```{r, out.width="70%", fig.cap="Latitude angle plot", fig.align='center'}
+plot(x = t / 3600, 
+     y = rad2deg(lambda),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(\lambda, \degree)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+```{r, out.width="70%", fig.cap="Azimuth angle plot", fig.align='center'}
+plot(x = t / 3600, 
+     y = rad2deg(eps),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(\epsilon, \degree)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+### ARS values plot
+
+```{r, out.width="70%", fig.cap="ARS values", fig.align='center', fig.height=10}
+par(mfcol = c(3, 1))
+
+plot(x = t[1:(t_f * nu_N)] / 3600, 
+     y = rad2deg(gyr_b_mod[1, ]) * 3600,
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(Angular rate, \degree/h)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+
+plot(x = t[1:(t_f * nu_N)] / 3600, 
+     y = rad2deg(gyr_b_mod[2, ]) * 3600,
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(Angular rate, \degree/h)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+
+plot(x = t[1:(t_f * nu_N)] / 3600,
+     y = rad2deg(gyr_b_mod[3, ]) * 3600,
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(Angular rate, \degree/h)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+```
+
+### Accelerometer values plot
+
+```{r, out.width="70%", fig.cap="Accelerometer values", fig.align='center', fig.height=10}
+par(mfcol = c(3, 1))
+
+plot(x = t[1:(t_f * nu_N)] / 3600,
+     y = rad2deg(acc_b_mod[1, ]),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(Acceleration, m/s^2)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+
+plot(x = t[1:(t_f * nu_N)] / 3600,
+     y = rad2deg(acc_b_mod[2, ]),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(Acceleration, m/s^2)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
+
+plot(x = t[1:(t_f * nu_N)] / 3600,
+     y = rad2deg(acc_b_mod[3, ]),
+     type = "l",
+     lty = 1,
+     col = "blue",
+     xlab = "Time, h",
+     ylab = TeX(r"(Acceleration, m/s^2)"),
+     xlim = c(0, t_f / 3600),
+     panel.first = grid(nx = 10, ny = 10, col = "lightgray", lty = "dotted"))
 ```
